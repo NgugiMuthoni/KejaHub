@@ -3,8 +3,15 @@ package routes
 import (
 	"kejahub-backend/internal/database"
 
+	"kejahub-backend/internal/services"
+
 	"github.com/gin-gonic/gin"
 )
+
+type STKInput struct {
+	Phone  string `json:"phone"`
+	Amount int    `json:"amount"`
+}
 
 func MpesaCallback(c *gin.Context) {
 
@@ -69,4 +76,41 @@ func MpesaCallback(c *gin.Context) {
 	database.Insert("payments", data)
 
 	c.JSON(200, gin.H{"message": "callback processed", "phone": phone})
+}
+
+func STKPushRequest(c *gin.Context) {
+
+	var input STKInput
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := services.STKPush(input.Phone, input.Amount)
+
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 🔥 STORE CHECKOUT REQUEST ID (IMPORTANT FIX)
+	database.Insert("payments", map[string]interface{}{
+		"phone":               input.Phone,
+		"amount":              input.Amount,
+		"checkout_request_id": result.CheckoutRequestID,
+		"status":              "pending",
+		"method":              "mpesa",
+	})
+
+	c.JSON(200, gin.H{
+		"checkout_request_id": result.CheckoutRequestID,
+		"message":             result.CustomerMessage,
+	})
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, result)
 }

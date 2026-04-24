@@ -63,7 +63,9 @@ func main() {
 	router.GET("/utilities/:id/check", middleware.AuthMiddleware(), routes.CheckPriorityUtilities)
 	// Get tenant utilities
 	router.GET("/tenants/:id/utilities", middleware.AuthMiddleware(), routes.GetTenantUtilities)
+	router.POST("/mpesa/stk", middleware.AuthMiddleware(), routes.STKPushRequest)
 
+	
 	// Start server
 	log.Println("Server running on :8080")
 	router.Run(":8080")
