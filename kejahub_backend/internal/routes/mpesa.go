@@ -1,51 +1,14 @@
 package routes
 
 import (
-	"kejahub-backend/internal/database"
+	"fmt"
 	"kejahub-backend/internal/services"
+	"time"
+	"kejahub-backend/internal/database"
 
 	"github.com/gin-gonic/gin"
 )
 
-type STKInput struct {
-	Phone  string `json:"phone"`
-	Amount int    `json:"amount"`
-}
-
-// 🚀 STK PUSH REQUEST
-func STKPushRequest(c *gin.Context) {
-
-	var input STKInput
-
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Call STK service
-	result, err := services.STKPush(input.Phone, input.Amount)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 💾 Store initial transaction (PENDING)
-	database.Insert("payments", map[string]interface{}{
-		"phone":               input.Phone,
-		"amount":              input.Amount,
-		"checkout_request_id": result.CheckoutRequestID,
-		"status":              "pending",
-		"method":              "mpesa",
-	})
-
-	// Return response immediately (IMPORTANT for STK)
-	c.JSON(200, gin.H{
-		"checkout_request_id": result.CheckoutRequestID,
-		"message":             result.CustomerMessage,
-	})
-}
-
-// 📩 MPESA CALLBACK
 func MpesaCallback(c *gin.Context) {
 
 	var payload map[string]interface{}
@@ -55,80 +18,63 @@ func MpesaCallback(c *gin.Context) {
 		return
 	}
 
-	body, ok := payload["Body"].(map[string]interface{})
-	if !ok {
-		c.JSON(400, gin.H{"error": "invalid callback body"})
-		return
-	}
+	body := payload["Body"].(map[string]interface{})
+	stk := body["stkCallback"].(map[string]interface{})
 
-	stkCallback, ok := body["stkCallback"].(map[string]interface{})
-	if !ok {
-		c.JSON(400, gin.H{"error": "invalid stk callback"})
-		return
-	}
-
-	resultCode, ok := stkCallback["ResultCode"].(float64)
-	if !ok {
-		c.JSON(400, gin.H{"error": "invalid result code"})
-		return
-	}
-
-	checkoutID, _ := stkCallback["CheckoutRequestID"].(string)
+	resultCode := int(stk["ResultCode"].(float64))
+	checkoutID := stk["CheckoutRequestID"].(string)
 
 	// ❌ FAILED PAYMENT
-	if int(resultCode) != 0 {
-		database.Insert("payments", map[string]interface{}{
-			"checkout_request_id": checkoutID,
-			"status":              "failed",
-			"method":              "mpesa",
-		})
-
-		c.JSON(200, gin.H{"message": "payment failed"})
+	if resultCode != 0 {
+		c.JSON(200, gin.H{"message": "failed"})
 		return
 	}
 
-	// ✅ SUCCESS CASE
-	callbackMetadata, ok := stkCallback["CallbackMetadata"].(map[string]interface{})
-	if !ok {
-		c.JSON(400, gin.H{"error": "missing metadata"})
-		return
-	}
-
-	items, ok := callbackMetadata["Item"].([]interface{})
-	if !ok {
-		c.JSON(400, gin.H{"error": "invalid items"})
-		return
-	}
+	// ✅ SUCCESS
+	meta := stk["CallbackMetadata"].(map[string]interface{})
+	items := meta["Item"].([]interface{})
 
 	var amount float64
 	var phone string
 
 	for _, item := range items {
-		entry, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
+		entry := item.(map[string]interface{})
 
 		if entry["Name"] == "Amount" {
-			amount, _ = entry["Value"].(float64)
+			amount = entry["Value"].(float64)
 		}
 
 		if entry["Name"] == "PhoneNumber" {
-			phone, _ = entry["Value"].(string)
+			phone = fmt.Sprintf("%.0f", entry["Value"])
 		}
 	}
 
-	// 💾 Store successful payment
+	// 🔍 FIND TENANT
+	tenant, err := database.GetOne("tenants", "?phone=eq."+phone)
+	if err != nil {
+		c.JSON(200, gin.H{"message": "tenant not found"})
+		return
+	}
+
+	tenantID := tenant["id"].(string)
+	houseID := tenant["house_id"].(string)
+
+	// 📅 ENSURE RENT CYCLE
+	cycleID, _ := services.EnsureRentCycle(tenant)
+
+	// 💾 STORE PAYMENT
 	database.Insert("payments", map[string]interface{}{
-		"phone":               phone,
-		"amount":              amount,
-		"checkout_request_id": checkoutID,
-		"status":              "paid",
-		"method":              "mpesa",
+		"tenant_id":     tenantID,
+		"house_id":      houseID,
+		"rent_cycle_id": cycleID,
+		"amount":        amount,
+		"method":        "mpesa",
+		"payment_date":  time.Now(),
 	})
 
-	c.JSON(200, gin.H{
-		"message": "callback processed",
-		"phone":   phone,
-	})
+	// 🔥 APPLY PAYMENT
+	cycle, _ := database.GetOne("rent_cycles", "?id=eq."+cycleID)
+	services.ApplyPayment(cycle, amount)
+
+	c.JSON(200, gin.H{"message": "processed"})
 }

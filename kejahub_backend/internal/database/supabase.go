@@ -1,24 +1,91 @@
 package database
 
 import (
-	"log"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 )
 
-// Connect just validates environment variables
-func Connect() {
-	log.Println("🚀 Checking Supabase configuration...")
+var baseURL = os.Getenv("SUPABASE_URL") + "/rest/v1"
+var apiKey = os.Getenv("SUPABASE_API_KEY")
 
-	url := os.Getenv("SUPABASE_URL")
-	key := os.Getenv("SUPABASE_KEY")
+// INSERT
 
-	if url == "" {
-		log.Fatal("❌ SUPABASE_URL is missing in .env")
+
+// GET ONE
+func GetOne(table string, query string) (map[string]interface{}, error) {
+
+	url := baseURL + "/" + table + query
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("apikey", apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var result []map[string]interface{}
+	json.Unmarshal(body, &result)
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("not found")
 	}
 
-	if key == "" {
-		log.Fatal("❌ SUPABASE_KEY is missing in .env")
-	}
+	return result[0], nil
+}
 
-	log.Println("✅ Supabase configuration loaded successfully")
+// GET ALL
+func GetAll(table string, query string) ([]map[string]interface{}, error) {
+
+	url := baseURL + "/" + table + query
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("apikey", apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var result []map[string]interface{}
+	json.Unmarshal(body, &result)
+
+	return result, nil
+}
+
+// UPDATE
+func Update(table string, id string, data map[string]interface{}) error {
+
+	jsonData, _ := json.Marshal(data)
+
+	url := baseURL + "/" + table + "?id=eq." + id
+
+	req, _ := http.NewRequest("PATCH", url, bytes.NewBuffer(jsonData))
+
+	req.Header.Set("apikey", apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return nil
 }

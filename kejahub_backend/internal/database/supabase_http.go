@@ -47,27 +47,21 @@ func Get(table string, query string) ([]map[string]interface{}, error) {
 
 func Insert(table string, data map[string]interface{}) error {
 
-	baseURL, key := getSupabaseConfig()
+	jsonData, _ := json.Marshal(data)
 
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
+	req, _ := http.NewRequest("POST", baseURL+"/"+table, bytes.NewBuffer(jsonData))
 
-	fullURL := baseURL + "/" + table
-
-	req, err := http.NewRequest("POST", fullURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("apikey", key)
-	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("apikey", apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Prefer", "return=minimal")
 
 	client := &http.Client{}
-	_, err = client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
-	return err
+	return nil
 }
